@@ -1,0 +1,17 @@
+# Environments
+llmev/
+.env
+
+# Cache and temporary files
+__pycache__/
+*.pyc
+.DS_Store
+
+# Data and Vector Databases
+data/
+vector_db/
+chroma_db/
+*.pdf
+*.csv
+*.png
+*.jpg
