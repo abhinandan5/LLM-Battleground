@@ -20,10 +20,9 @@ from src.eval.judge import evaluate_responses
 from src.utils.helpers import extract_json
 from src.eval.validation import validate_output
 from src.utils.exporter import export_chat_history
-from src.engine.mcp_client import get_context_from_mcp
-
-# Import your ingestion logic directly!
-from src.engine.ingest import ingest_data 
+# MCP disabled for cloud deployment
+# from src.engine.mcp_client import get_context_from_mcp
+# from src.engine.ingest import ingest_data 
 
 # --- PAGE CONFIG & CUSTOM CSS (BEAUTIFICATION) ---
 st.set_page_config(page_title="RAG Arena", layout="wide", page_icon="🏛️")
@@ -59,11 +58,8 @@ st.markdown("Upload documents and evaluate multi-agent orchestration pipelines d
 # --- SIDEBAR & SCOREBOARD ---
 with st.sidebar:
     st.header("⚙️ Backend Engine")
-    backend_engine = st.radio(
-        "Select Context Retrieval Engine:",
-        ["Original In-Memory DB", "MCP Persistent Server"],
-        help="Switch between your temporary memory and your permanent hard-drive microservice."
-    )
+    st.info("Using In-Memory Vector Database")
+    backend_engine = "Original In-Memory DB"
     
     st.divider()
     st.header("1. Data Ingestion")
@@ -81,26 +77,11 @@ with st.sidebar:
     st.divider()
     st.header("🧹 Database Management")
     
-    if st.button("🗑️ Clear In-Memory DB", use_container_width=True):
+    if st.button("🗑️ Clear Database", use_container_width=True):
         st.session_state.retriever = None
         st.session_state.messages = []
         st.session_state.current_file = None
-        st.success("Temporary In-Memory database wiped!")
-        
-    if st.button("🚨 Wipe MCP Database", use_container_width=True, type="primary"):
-        db_path = os.path.abspath(os.path.join(root_dir, "data/vector_db"))
-        try:
-            if os.path.exists(db_path):
-                shutil.rmtree(db_path) # Physically deletes the folder
-                st.session_state.messages = []
-                st.session_state.current_file = None
-                st.success("MCP Persistent Database has been completely wiped!")
-            else:
-                st.info("MCP Database is already empty.")
-        except PermissionError:
-            st.error("Cannot wipe database. It is currently locked by another process. (Try quitting Claude Desktop first).")
-        except Exception as e:
-            st.error(f"Error wiping database: {e}")
+        st.success("Database cleared!")
 
     st.divider()
     st.header("2. Pipeline Settings")
@@ -152,32 +133,18 @@ if active_source is not None:
         st.session_state.messages = [] 
         st.session_state.scoreboard = {"GPT": {"acc": [], "comp": []}, "Gemini": {"acc": [], "comp": []}}
         
-        # --- DYNAMIC INGESTION ROUTING ---
-        if backend_engine == "Original In-Memory DB":
-            with st.spinner("Building Temporary VectorDB Pipeline..."):
-                if is_url:
-                    st.session_state.retriever = process_document(youtube_url)
-                else:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{active_source.split('.')[-1]}") as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        tmp_file_path = tmp_file.name
-                    
-                    st.session_state.retriever = process_document(tmp_file_path)
-                    os.unlink(tmp_file_path) 
-            st.success(f"Ingested: {active_source} into Temporary Memory.")
+        # --- DOCUMENT INGESTION ---
+        with st.spinner("Building VectorDB Pipeline..."):
+            if is_url:
+                st.session_state.retriever = process_document(youtube_url)
+            else:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{active_source.split('.')[-1]}") as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_file_path = tmp_file.name
                 
-        elif backend_engine == "MCP Persistent Server":
-            with st.spinner(f"Permanently writing {active_source} to MCP Database..."):
-                if is_url:
-                    ingest_data(youtube_url)
-                else:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{active_source.split('.')[-1]}") as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        tmp_file_path = tmp_file.name
-                    
-                    ingest_data(tmp_file_path)
-                    os.unlink(tmp_file_path)
-            st.success(f"✅ Successfully appended {active_source} to the persistent MCP Database!")
+                st.session_state.retriever = process_document(tmp_file_path)
+                os.unlink(tmp_file_path) 
+        st.success(f"✅ Ingested: {active_source}")
 
 # --- UI RENDER HELPER ---
 def render_arena_turn(gpt_ans, gemini_ans, eval_data, gpt_valid, gemini_valid):
@@ -203,7 +170,7 @@ def render_arena_turn(gpt_ans, gemini_ans, eval_data, gpt_valid, gemini_valid):
         st.info(f"**Feedback:** {eval_data.get('Model B', {}).get('Feedback', '')}")
 
 # --- CHAT INTERFACE ---
-if backend_engine == "MCP Persistent Server" or st.session_state.retriever is not None:
+if st.session_state.retriever is not None:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "user":
@@ -223,18 +190,13 @@ if backend_engine == "MCP Persistent Server" or st.session_state.retriever is no
 
         with st.chat_message("assistant"):
             
-            with st.spinner(f"Querying {backend_engine}..."):
-                if backend_engine == "Original In-Memory DB":
-                    if st.session_state.retriever is None:
-                        st.error("Please upload a document or URL first to use the Original In-Memory DB.")
-                        st.stop()
-                    docs = st.session_state.retriever.invoke(question)
-                    chunk_texts = [d.page_content for d in docs]
-                    context = "\n\n".join([f"Chunk {i+1}:\n{text}" for i, text in enumerate(chunk_texts)])
-                else:
-                    # New MCP Logic
-                    context = get_context_from_mcp(question)
-                    chunk_texts = [context] 
+            with st.spinner("Retrieving context..."):
+                if st.session_state.retriever is None:
+                    st.error("Please upload a document or URL first.")
+                    st.stop()
+                docs = st.session_state.retriever.invoke(question)
+                chunk_texts = [d.page_content for d in docs]
+                context = "\n\n".join([f"Chunk {i+1}:\n{text}" for i, text in enumerate(chunk_texts)]) 
                 
             with st.spinner("Generating Agent Responses..."):
                 gpt_ans = get_gpt_response(context, question, history_str)
